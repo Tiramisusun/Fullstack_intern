@@ -39,7 +39,7 @@ export function App() {
     [reservation, tick]
   );
 // refresh the data on the page, including products and user reservations
-  async function refreshPageData() {
+  async function refreshPageData(activeReservationId?: string) {
     const [nextProducts, nextReservations] = await Promise.all([
       fetchProducts(),
       fetchUserReservations(demoUserId)
@@ -47,6 +47,15 @@ export function App() {
 
     setProducts(nextProducts);
     setAccountReservations(nextReservations);
+    setReservation((currentReservation) =>
+      currentReservation || activeReservationId
+        ? nextReservations.find(
+            (nextReservation) => nextReservation.id === (activeReservationId ?? currentReservation?.id)
+          ) ?? currentReservation
+        : currentReservation
+    );
+
+    return { products: nextProducts, reservations: nextReservations };
   }
 
   useEffect(() => {
@@ -58,14 +67,28 @@ export function App() {
     return () => window.clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (reservation?.status !== "PENDING" || remainingSeconds > 0) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void refreshPageData().catch((error: Error) => setMessage(error.message));
+    }, 31_000);
+
+    return () => window.clearTimeout(timeout);
+  }, [reservation?.id, reservation?.status, remainingSeconds]);
+
   async function handleReserve(productId: string) {
     setLoadingProductId(productId);
     setMessage("");
 
     try {
       const nextReservation = await createReservation(productId, demoUserId);
-      setReservation(nextReservation);
-      await refreshPageData();
+      const refreshed = await refreshPageData(nextReservation.id);
+      setReservation(
+        refreshed.reservations.find((reservationItem) => reservationItem.id === nextReservation.id) ?? nextReservation
+      );
       setMessage("Reservation created. Complete checkout before it expires.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Reservation failed");
@@ -84,8 +107,10 @@ export function App() {
 
     try {
       const completed = await checkoutReservation(reservation.id);
-      setReservation(completed);
-      await refreshPageData();
+      const refreshed = await refreshPageData(completed.id);
+      setReservation(
+        refreshed.reservations.find((reservationItem) => reservationItem.id === completed.id) ?? completed
+      );
       setMessage("Checkout complete.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Checkout failed");
@@ -201,4 +226,3 @@ export function App() {
 }
 
 //所以这判断一个react文件做什么，通常看这个顺序：入口怎么用它，import了什么，state存什么，函数处理什么，return渲染什么。
-
