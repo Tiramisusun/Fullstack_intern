@@ -2,6 +2,8 @@
   "name": "limited-product-drop",
   "private": true,
   "scripts": {
+    "build": "npm --prefix backend ci && npm --prefix backend run prisma:generate && npm --prefix backend run build",
+    "start": "npm --prefix backend run start",
     "dev": "npm-run-all --parallel dev:backend dev:frontend",
     "dev:backend": "npm --prefix backend run start:dev",
     "dev:frontend": "npm --prefix frontend run dev",
