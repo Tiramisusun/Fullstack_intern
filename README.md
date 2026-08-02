@@ -2,13 +2,20 @@
 
 A full-stack reservation and checkout system for a limited product drop.
 
+## Live Deployment
+
+- Frontend: https://motivated-caring-production-813b.up.railway.app
+- Backend API: https://fullstackintern-production-2e8f.up.railway.app
+- Products endpoint: https://fullstackintern-production-2e8f.up.railway.app/products
+
 The project uses:
 
 - Frontend: React + TypeScript + Vite
-- Backend: NestJS + TypeScript
+- Backend: NestJS + TypeScript + Node.js
 - Database: PostgreSQL
 - Locking/cache: Redis
 - ORM: Prisma
+- Deployment: Railway
 
 ## Why This Architecture
 
@@ -17,6 +24,76 @@ Inventory correctness is enforced by PostgreSQL, not by application memory. Rese
 The important rule is:
 
 > Redis helps requests queue up. PostgreSQL guarantees the inventory cannot be oversold.
+
+## Project Structure
+
+```text
+.
+├── backend
+│   ├── prisma
+│   │   ├── migrations
+│   │   │   └── ... migration SQL files
+│   │   ├── schema.prisma        # Product and Reservation data model
+│   │   └── seed.ts              # Demo product seed data
+│   ├── src
+│   │   ├── main.ts              # NestJS bootstrap, CORS, validation, PORT
+│   │   ├── app.module.ts        # Root backend module
+│   │   ├── prisma
+│   │   │   ├── prisma.module.ts
+│   │   │   └── prisma.service.ts
+│   │   ├── redis
+│   │   │   ├── redis.module.ts
+│   │   │   └── redis.service.ts # Product reservation lock client
+│   │   ├── products
+│   │   │   ├── products.controller.ts
+│   │   │   ├── products.module.ts
+│   │   │   ├── products.service.ts
+│   │   │   └── products.service.spec.ts
+│   │   └── reservations
+│   │       ├── dto
+│   │       │   └── create-reservation.dto.ts
+│   │       ├── reservations.controller.ts
+│   │       ├── reservations.module.ts
+│   │       ├── reservations.service.ts
+│   │       └── reservations.service.spec.ts
+│   ├── package.json
+│   └── tsconfig.json
+├── frontend
+│   ├── src
+│   │   ├── api.ts               # Frontend API client
+│   │   ├── App.tsx              # Product, reservation, and checkout UI
+│   │   ├── main.tsx             # React entry point
+│   │   └── styles.css
+│   ├── index.html
+│   ├── package.json
+│   └── vite.config.ts
+├── docker-compose.yml           # Local PostgreSQL and Redis
+├── railway.json                 # Railway build/start configuration
+├── package.json                 # Root scripts for local dev and deployment
+└── README.md
+```
+
+## Why PostgreSQL
+
+PostgreSQL is used because the core requirement is inventory correctness under concurrent reservations. When a user reserves a product, the backend performs an atomic inventory update:
+
+```sql
+UPDATE "Product"
+SET "availableStock" = "availableStock" - quantity
+WHERE id = productId
+  AND "availableStock" >= quantity;
+```
+
+This means stock is only decremented when enough inventory is still available. If multiple users reserve the same product at the same time, PostgreSQL ensures the update is applied safely and `availableStock` cannot go below zero.
+
+PostgreSQL also provides:
+
+- transactions, so inventory decrement and reservation creation commit together
+- foreign keys, so reservations must reference real products
+- constraints, so invalid stock values can be rejected at the database layer
+- strong Prisma support for migrations and generated TypeScript client types
+
+Redis is still useful for reducing concurrent pressure on the same product, but it is not the final source of correctness. Redis helps requests queue; PostgreSQL guarantees the inventory state.
 
 ## Core Flow
 
@@ -235,10 +312,34 @@ Run backend tests:
 npm --prefix backend test
 ```
 
+Test files:
+
+```text
+backend/src/reservations/reservations.service.spec.ts
+backend/src/products/products.service.spec.ts
+```
+
 The included tests cover:
 
-- no reservation is created when the atomic inventory update fails
-- expired reservations cannot be checked out and return inventory
+- creating a pending reservation when stock is available
+- decrementing `availableStock` with an atomic product update
+- avoiding reservation creation when the Redis product lock is busy
+- returning `Sold out` when the atomic inventory update affects zero rows
+- completing checkout by changing a reservation from `PENDING` to `COMPLETED`
+- blocking checkout for expired pending reservations
+- returning inventory when pending reservations expire
+- requiring `userId` when listing reservations for an account
+- calculating product inventory display fields:
+  - `availableStock` from the `Product` row
+  - `reservedStock` from `PENDING` reservations
+  - `soldStock` from `COMPLETED` reservations
+
+Expected result:
+
+```text
+Test Suites: 2 passed
+Tests: 8 passed
+```
 
 ## Assumptions
 
