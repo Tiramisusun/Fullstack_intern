@@ -129,28 +129,6 @@ There is also a manual endpoint:
 POST /reservations/expire
 ```
 
-## API Reference
-
-The backend does not serve a page at `/`. If you open `http://localhost:3000/` in a browser, NestJS will return `Cannot GET /`. That is expected. Use the API routes below instead.
-
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/products` | List all products with available, reserved, sold, and total stock |
-| `GET` | `/products/:id` | Fetch one product |
-| `POST` | `/reservations` | Create a pending reservation |
-| `GET` | `/reservations?userId=demo-user` | List reservations for a user |
-| `GET` | `/reservations/:id` | Fetch one reservation |
-| `POST` | `/reservations/:id/checkout` | Complete checkout for a pending reservation |
-| `POST` | `/reservations/expire` | Manually expire pending reservations |
-
-Example reservation request:
-
-```bash
-curl -X POST http://localhost:3000/reservations \
-  -H "Content-Type: application/json" \
-  -d '{"productId":"product-id","userId":"demo-user","quantity":1}'
-```
-
 ## Database Model
 
 ### Product
@@ -177,15 +155,14 @@ curl -X POST http://localhost:3000/reservations \
 
 ## Data Integrity
 
-Data integrity is handled by a combination of TypeScript DTO validation, Prisma models, Redis locking, and PostgreSQL transactions:
+PostgreSQL constraints prevent invalid data:
 
-- `CreateReservationDto` validates that `productId` and `userId` are strings.
-- `CreateReservationDto` validates that `quantity` is an integer greater than or equal to 1.
-- The Prisma schema requires reservations to reference a real product.
-- The reservation create flow checks that the product exists before reserving stock.
-- The inventory decrement is atomic: stock is only decremented when `availableStock >= quantity`.
-- Reservation creation and inventory decrement run in the same PostgreSQL transaction.
-- Expiration only returns inventory when a reservation is still `PENDING`, so repeated expiration attempts do not double-return stock.
+- price cannot be negative
+- total stock cannot be negative
+- available stock cannot be negative
+- available stock cannot exceed total stock
+- reservation quantity must be greater than zero
+- reservation must reference a real product
 
 ## Redis Locking
 
@@ -207,6 +184,12 @@ Redis is intentionally not the only safety mechanism. If Redis expires early or 
 
 ## Run Locally
 
+Start PostgreSQL and Redis:
+
+```bash
+docker compose up -d postgres redis
+```
+
 Install dependencies:
 
 ```bash
@@ -217,18 +200,6 @@ Create backend environment:
 
 ```bash
 cp backend/.env.example backend/.env
-```
-
-Optional frontend environment:
-
-```bash
-cp frontend/.env.example frontend/.env
-```
-
-Start PostgreSQL and Redis:
-
-```bash
-npm run db:up
 ```
 
 Run migrations and seed data:
@@ -256,27 +227,6 @@ Backend:
 http://localhost:3000
 ```
 
-Useful backend checks:
-
-```text
-http://localhost:3000/products
-http://localhost:3000/reservations?userId=demo-user
-```
-
-## Backend Startup
-
-The root package script starts the backend through the backend package:
-
-```text
-npm run dev:backend
-  -> npm --prefix backend run start:dev
-  -> nest start --watch
-  -> backend/src/main.ts
-  -> AppModule
-```
-
-`main.ts` creates the NestJS app, enables CORS for the frontend, enables request validation, and listens on `PORT` or `3000`.
-
 ## Testing
 
 Run backend tests:
@@ -287,13 +237,8 @@ npm --prefix backend test
 
 The included tests cover:
 
-- creating a pending reservation when stock is available
-- avoiding database writes when the Redis product lock is busy
-- returning sold out when the atomic inventory update affects zero rows
-- blocking checkout for expired pending reservations
-- returning inventory when reservations expire
-- completing checkout for valid pending reservations
-- requiring `userId` when listing reservations for a user
+- no reservation is created when the atomic inventory update fails
+- expired reservations cannot be checked out and return inventory
 
 ## Assumptions
 
